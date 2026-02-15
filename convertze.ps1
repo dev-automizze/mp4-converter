@@ -1,8 +1,8 @@
-
+<#
 .SYNOPSIS
     Cloud-Hosted FFmpeg Automation Tool (The "Genius" Script)
     Run via: irm https://convertze.automizze.us | iex
-
+#>
 
 # ================= SETUP =================
 $Host.UI.RawUI.WindowTitle = "Media Server Automation Tool (RTX 4080 Edition)"
