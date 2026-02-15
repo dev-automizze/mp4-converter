@@ -5,7 +5,7 @@
 #>
 
 # ================= SETUP =================
-$Host.UI.RawUI.WindowTitle = "Media Server Automation Tool (RTX 4080 Edition)"
+$Host.UI.RawUI.WindowTitle = "Media Server Conversion Tool (RTX 4080 Edition)"
 Clear-Host
 
 # Function to Pick Folder using Windows GUI
