@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Convertze Automizze Studio (RTX 4080 - Silent & Efficient Edition)
+    Convertze Automizze Studio (RTX 4080 - Final Polish)
     Run via: irm convertze.automizze.us | iex
 #>
 
 # ================= SYSTEM SETUP =================
-$Host.UI.RawUI.WindowTitle = "Convertze Studio (Background Mode)"
+$Host.UI.RawUI.WindowTitle = "Convertze Studio (Ordered)"
 
 # ---------------------------------------------------------
 #  MODERN FOLDER PICKER
@@ -37,19 +37,18 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
 function Start-Conversion {
     param ([string]$TargetFolder, [string]$PresetName, [bool]$DeleteSource)
 
-    # --- QUALITY SETTINGS (ADJUSTED FOR SIZE) ---
+    # --- QUALITY SETTINGS ---
     if ($PresetName -eq "1080p") {
-        # Changed from 24 -> 27 (Fixes the 650MB bloat)
-        $cq = 27  
-        $desc = "BALANCED 1080p"
+        $cq = 27; $desc = "BALANCED 1080p"
     } else {
-        # Changed from 27 -> 29 (Ensures file is smaller than TS)
-        $cq = 29  
-        $desc = "COMPACT 720p"
+        $cq = 29; $desc = "COMPACT 720p"
     }
-    # --------------------------------------------
+    
+    # --- THE MAGIC FIX: NATURAL SORT ---
+    # This regex trick forces "Episode 2" to come before "Episode 10"
+    $files = Get-ChildItem -Path $TargetFolder -Filter *.ts -Recurse | 
+        Sort-Object { [regex]::Replace($_.Name, '\d+', { $args[0].Value.PadLeft(10, '0') }) }
 
-    $files = Get-ChildItem -Path $TargetFolder -Filter *.ts -Recurse
     $totalFiles = $files.Count
 
     if ($totalFiles -eq 0) {
@@ -61,6 +60,7 @@ function Start-Conversion {
     Write-Host " STARTING BATCH: $desc" -ForegroundColor Yellow
     Write-Host " Folder: $TargetFolder" -ForegroundColor Gray
     Write-Host " Files:  $totalFiles" -ForegroundColor Gray
+    Write-Host " Order:  Alphabetical (Natural)" -ForegroundColor Green
     Write-Host "==========================================" -ForegroundColor Cyan
     
     $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
@@ -81,8 +81,7 @@ function Start-Conversion {
             continue
         }
 
-        # --- THE FIX: -NoNewWindow ---
-        # Runs inside this window. No popping up. No stealing focus.
+        # --- CONVERSION COMMAND ---
         $process = Start-Process -FilePath "ffmpeg" -ArgumentList `
             "-y -hide_banner -loglevel error -stats",
             "-fflags +genpts+discardcorrupt",
@@ -96,13 +95,12 @@ function Start-Conversion {
             # Calculate Size Difference
             $inSize = (Get-Item $inputPath).Length / 1MB
             $outSize = (Get-Item $outputPath).Length / 1MB
-            $diff = $outSize - $inSize
             
-            # Show Result in color
+            # Show Result
             if ($outSize -lt $inSize) {
                 Write-Host "    [OK] Done! Saved $([math]::Round($inSize - $outSize)) MB" -ForegroundColor Cyan
             } else {
-                Write-Host "    [OK] Done! (+$([math]::Round($diff)) MB)" -ForegroundColor Yellow
+                Write-Host "    [OK] Done! (+$([math]::Round($outSize - $inSize)) MB)" -ForegroundColor Yellow
             }
 
             # Deletion Logic
@@ -133,7 +131,7 @@ function Start-Conversion {
 do {
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host "    CONVERTZE STUDIO (Background Mode)    " -ForegroundColor White
+    Write-Host "    CONVERTZE STUDIO (Final Polish)       " -ForegroundColor White
     Write-Host "==========================================" -ForegroundColor Cyan
     Write-Host " 1. Convert 1080p (Balanced)" -ForegroundColor Green
     Write-Host " 2. Convert 720p  (Compact)" -ForegroundColor Green
@@ -145,7 +143,6 @@ do {
     $choice = Read-Host " Select Option"
 
     if ($choice -in '1','2','3','4') {
-        # Try GUI first, user can cancel to switch to manual
         $p = $null
         $picker = New-Object FolderPicker
         if ($picker.ShowDialog()) { 
