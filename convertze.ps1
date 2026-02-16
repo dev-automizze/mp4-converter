@@ -5,7 +5,7 @@
 #>
 
 # ================= SYSTEM SETUP =================
-$Host.UI.RawUI.WindowTitle = "Convertze Studio (Powered by Automizze.)"
+$Host.UI.RawUI.WindowTitle = "Convertze Studio (RTX 4080)"
 # Force strict FFmpeg check
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Host "FFmpeg missing! Please install it first." -ForegroundColor Red
