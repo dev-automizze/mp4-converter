@@ -1,72 +1,74 @@
 <#
 .SYNOPSIS
-    Convertze Automizze Studio (RTX 4080 Edition - v3.0)
+    Convertze Automizze Studio (RTX 4080 Edition - v4.0 Network Fix)
     Run via: irm convertze.automizze.us | iex
 #>
 
 # ================= SYSTEM SETUP =================
-$Host.UI.RawUI.WindowTitle = "Convertze Studio (RTX 4080)"
+$Host.UI.RawUI.WindowTitle = "Convertze Studio v4.0 (Network Edition)"
 
-# ---------------------------------------------------------
-#  MODERN FOLDER PICKER (The "Nuclear" Fix)
-#  Injects C# to use the real Windows Explorer dialog
-# ---------------------------------------------------------
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
-
-public class FolderPicker
-{
-    public string ResultPath;
-
-    public bool ShowDialog()
-    {
-        var dialog = new System.Windows.Forms.FolderBrowserDialog();
-        // This is the magic. It uses the modern shell.
-        // But if that fails, we fallback to standard.
-        dialog.Description = "Select your Media Folder (Z: Drive / Network)";
-        dialog.ShowNewFolderButton = false;
-        
-        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-        {
-            ResultPath = dialog.SelectedPath;
-            return true;
-        }
-        return false;
-    }
-}
-"@ -ReferencedAssemblies System.Windows.Forms
-
-# ---------------------------------------------------------
-
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    Write-Host "FFmpeg missing! Please install it first." -ForegroundColor Red
-    Exit
+# Function: Modern Folder Picker
+function Get-FolderSelection {
+    Add-Type -AssemblyName System.Windows.Forms
+    $shell = New-Object -ComObject Shell.Application
+    # 17 = My Computer (Attempt to show all drives)
+    $folder = $shell.BrowseForFolder(0, "Select Media Folder", 0, 17)
+    if ($folder) { return $folder.Self.Path }
+    return $null
 }
 
-# Function: The Core Conversion Logic
-function Start-Conversion {
-    param (
-        [string]$TargetFolder,
-        [string]$PresetName,
-        [bool]$DeleteSource
-    )
+# Function: Connect Network Drive (The Fix)
+function Connect-NetworkDrive {
+    Clear-Host
+    Write-Host "==========================================" -ForegroundColor Yellow
+    Write-Host "      CONNECT TO SERVER (Admin Mode)      " -ForegroundColor White
+    Write-Host "==========================================" -ForegroundColor Yellow
+    Write-Host "Since this script runs as Admin, it might not see your Z: drive." -ForegroundColor Gray
+    Write-Host "Let's connect manually properly.`n" -ForegroundColor Gray
+    
+    $serverPath = Read-Host "Server Path (e.g. \\172.10.10.67\media)"
+    $user = Read-Host "Username"
+    $pass = Read-Host "Password" -AsSecureString
+    $passPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($pass))
 
-    # QUALITY SETTINGS (Tweaked for Size)
-    if ($PresetName -eq "1080p") {
-        $cq = 25  # Increased slightly to keep size down
-        $desc = "MAX FIDELITY (1080p)"
+    Write-Host "`nAttempting to connect..." -ForegroundColor Cyan
+    
+    # Delete existing connection to prevent conflicts
+    net use $serverPath /delete /y 2>$null | Out-Null
+    
+    # Create new connection
+    $proc = Start-Process "net" -ArgumentList "use `"$serverPath`" $passPlain /user:$user" -Wait -PassThru -NoNewWindow
+    
+    if ($proc.ExitCode -eq 0) {
+        Write-Host "SUCCESS! Server is now connected." -ForegroundColor Green
+        Write-Host "You can now use path: $serverPath" -ForegroundColor Cyan
     } else {
-        $cq = 28  # Perfect for 720p space saving
-        $desc = "OPTIMIZED SIZE (720p)"
+        Write-Host "Connection Failed. Check IP or Password." -ForegroundColor Red
+    }
+    Pause
+}
+
+# Function: Core Conversion
+function Start-Conversion {
+    param ([string]$TargetFolder, [string]$PresetName, [bool]$DeleteSource)
+
+    # SETTINGS
+    if ($PresetName -eq "1080p") { $cq = 24; $desc = "MAX FIDELITY (1080p)" } 
+    else { $cq = 27; $desc = "OPTIMIZED SIZE (720p)" }
+
+    # Validate Path with specific error
+    if (-not (Test-Path $TargetFolder)) {
+        Write-Host "ERROR: Cannot access path: $TargetFolder" -ForegroundColor Red
+        Write-Host "Tip: Try Option 5 to connect to the server first." -ForegroundColor Yellow
+        Start-Sleep -Seconds 3
+        return
     }
 
     $files = Get-ChildItem -Path $TargetFolder -Filter *.ts -Recurse
     $totalFiles = $files.Count
 
     if ($totalFiles -eq 0) {
-        Write-Host "No .ts files found here!" -ForegroundColor Red
+        Write-Host "No .ts files found in $TargetFolder" -ForegroundColor Red
         Start-Sleep -Seconds 2
         return
     }
@@ -74,11 +76,10 @@ function Start-Conversion {
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
     Write-Host " MISSION START: $PresetName" -ForegroundColor Yellow
-    Write-Host " Location: $TargetFolder" -ForegroundColor Gray
-    Write-Host " Episodes: $totalFiles" -ForegroundColor Gray
+    Write-Host " Path: $TargetFolder" -ForegroundColor Gray
+    Write-Host " Files: $totalFiles" -ForegroundColor Gray
     Write-Host "==========================================" -ForegroundColor Cyan
     
-    # Start Stopwatch
     $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
     $count = 0
 
@@ -87,18 +88,14 @@ function Start-Conversion {
         $inputPath = $file.FullName
         $outputPath = [System.IO.Path]::ChangeExtension($inputPath, ".mp4")
 
-        # Status Update
-        Write-Host "[$count/$totalFiles] Converting: " -NoNewline -ForegroundColor Green
-        Write-Host $file.Name -ForegroundColor White
+        Write-Host "[$count/$totalFiles] $file.Name" -NoNewline -ForegroundColor White
 
         if (Test-Path $outputPath) {
-            Write-Host "    -> Skipped (Already exists)" -ForegroundColor DarkGray
+            Write-Host " -> Skipped" -ForegroundColor DarkGray
             continue
         }
 
-        # ---------------------------------------------------------
-        # THE ACTION WINDOW (Pop-up)
-        # ---------------------------------------------------------
+        # POPUP WINDOW ACTION
         $process = Start-Process -FilePath "ffmpeg" -ArgumentList `
             "-y -hide_banner",
             "-fflags +genpts+discardcorrupt",
@@ -108,86 +105,61 @@ function Start-Conversion {
             "-c:a copy",
             "`"$outputPath`"" -PassThru -Wait 
         
-        # Result Check
         if ($process.ExitCode -eq 0) {
-            # Deletion Logic
             if ($DeleteSource) {
                 if ((Get-Item $outputPath).Length -gt 1000) {
                     Remove-Item $inputPath -Force
-                    Write-Host "    -> Success! Original deleted." -ForegroundColor Cyan
+                    Write-Host " -> Done (Original Deleted)" -ForegroundColor Cyan
                 }
             } else {
-                Write-Host "    -> Success!" -ForegroundColor Cyan
+                Write-Host " -> Done" -ForegroundColor Green
             }
         } else {
-            Write-Host "    -> FAILED!" -ForegroundColor Red
+            Write-Host " -> FAILED" -ForegroundColor Red
         }
     }
-
-    $swTotal.Stop()
-    $avgTime = $swTotal.Elapsed.TotalSeconds / $totalFiles
-
-    # MISSION REPORT
-    Write-Host "`n==========================================" -ForegroundColor Yellow
-    Write-Host "           MISSION ACCOMPLISHED           " -ForegroundColor Green
-    Write-Host "==========================================" -ForegroundColor Yellow
-    Write-Host " Total Time:  $($swTotal.Elapsed.ToString('hh\:mm\:ss'))" -ForegroundColor White
-    Write-Host " Avg per Ep:  $([math]::Round($avgTime, 1)) seconds" -ForegroundColor White
-    Write-Host " Total Files: $totalFiles" -ForegroundColor White
-    Write-Host "==========================================" -ForegroundColor Yellow
     
-    Write-Host "`nPress any key to return to Main Menu..."
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    $swTotal.Stop()
+    Write-Host "`nMISSION COMPLETE. Time: $($swTotal.Elapsed.ToString('hh\:mm\:ss'))" -ForegroundColor Yellow
+    Pause
 }
 
-# ================= MAIN MENU LOOP =================
+# ================= MAIN MENU =================
 do {
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host "       CONVERTZE STUDIO (RTX 4080)        " -ForegroundColor White
+    Write-Host "       CONVERTZE STUDIO (v4.0 Net)        " -ForegroundColor White
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host " 1. Convert to 1080p (Max Quality)" -ForegroundColor Green
-    Write-Host " 2. Convert to 720p  (Optimized)" -ForegroundColor Green
-    Write-Host " 3. Convert (1080p) + DELETE .TS" -ForegroundColor Red
-    Write-Host " 4. Convert (720p)  + DELETE .TS" -ForegroundColor Red
+    Write-Host " 1. Convert 1080p (High Quality)" -ForegroundColor Green
+    Write-Host " 2. Convert 720p  (Optimized)" -ForegroundColor Green
+    Write-Host " 3. Convert 1080p + DELETE .TS" -ForegroundColor Red
+    Write-Host " 4. Convert 720p  + DELETE .TS" -ForegroundColor Red
+    Write-Host " ---------------------------------" -ForegroundColor DarkGray
+    Write-Host " 5. CONNECT NETWORK DRIVE (Fix)" -ForegroundColor Yellow
     Write-Host " Q. Exit" -ForegroundColor Gray
     Write-Host "==========================================" -ForegroundColor Cyan
     
     $choice = Read-Host " Select Option"
 
-    if ($choice -in '1','2','3','4') {
-        $path = $null
+    if ($choice -eq '5') {
+        Connect-NetworkDrive
+    }
+    elseif ($choice -in '1','2','3','4') {
+        Write-Host "`n [G] GUI Picker" -ForegroundColor Cyan
+        Write-Host " [T] Type/Paste Path (Recommended for Network)" -ForegroundColor Cyan
+        $m = Read-Host " Method?"
         
-        # ASK USER: GUI or MANUAL?
-        Write-Host "`n [G] GUI Picker (Try this first)" -ForegroundColor Cyan
-        Write-Host " [T] Type/Paste Path (Fallback)" -ForegroundColor Cyan
-        $method = Read-Host " Method?"
+        $p = $null
+        if ($m -eq "G") { $p = Get-FolderSelection }
+        if ($m -eq "T") { $p = Read-Host " Paste Path (e.g. \\172.10.10.67\media)" }
 
-        if ($method -eq "T") {
-            $path = Read-Host " Paste Path (e.g. Z:\Shows)"
-        } else {
-            # Try the Modern Picker
-            $picker = New-Object FolderPicker
-            if ($picker.ShowDialog()) {
-                $path = $picker.ResultPath
-            }
-        }
-
-        # Validate Path
-        if ($path -and (Test-Path $path)) {
+        if ($p) {
             switch ($choice) {
-                '1' { Start-Conversion -TargetFolder $path -PresetName "1080p" -DeleteSource $false }
-                '2' { Start-Conversion -TargetFolder $path -PresetName "720p"  -DeleteSource $false }
-                '3' { Start-Conversion -TargetFolder $path -PresetName "1080p" -DeleteSource $true }
-                '4' { Start-Conversion -TargetFolder $path -PresetName "720p"  -DeleteSource $true }
+                '1' { Start-Conversion $p "1080p" $false }
+                '2' { Start-Conversion $p "720p"  $false }
+                '3' { Start-Conversion $p "1080p" $true }
+                '4' { Start-Conversion $p "720p"  $true }
             }
-        } else {
-            Write-Host " Invalid Path or Cancelled!" -ForegroundColor Red
-            Start-Sleep -Seconds 1
         }
     }
-
 } until ($choice -eq 'Q')
-
-# Clean Exit
-Clear-Host
