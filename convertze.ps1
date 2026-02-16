@@ -1,63 +1,68 @@
 <#
 .SYNOPSIS
-    Convertze Automizze Tool (RTX 4080 Edition - v2.0)
+    Convertze Automizze Studio (RTX 4080 - Silent & Efficient Edition)
     Run via: irm convertze.automizze.us | iex
 #>
 
 # ================= SYSTEM SETUP =================
-$Host.UI.RawUI.WindowTitle = "Convertze Studio (RTX 4080)"
-# Force strict FFmpeg check
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    Write-Host "FFmpeg missing! Please install it first." -ForegroundColor Red
-    Exit
-}
+$Host.UI.RawUI.WindowTitle = "Convertze Studio (Background Mode)"
 
-# Function: Better Folder Picker (Shows Mapped Drives!)
-function Get-FolderSelection {
-    Add-Type -AssemblyName System.Windows.Forms
-    $shell = New-Object -ComObject Shell.Application
-    # 17 = ssfDRIVES (My Computer) - Shows Mapped Drives
-    $folder = $shell.BrowseForFolder(0, "Select your TV Show Folder (Z: Drive, etc)", 0, 17)
-    if ($folder) { return $folder.Self.Path }
-    return $null
-}
-
-# Function: The Core Conversion Logic
-function Start-Conversion {
-    param (
-        [string]$TargetFolder,
-        [string]$PresetName,
-        [bool]$DeleteSource
-    )
-
-    # ---------------- SETTINGS ----------------
-    # Tweak: Increased CQ slightly to prevent file bloating
-    if ($PresetName -eq "1080p") {
-        $cq = 24  # Balanced for 1080p (Prev: 23)
-        $desc = "MAX FIDELITY (1080p)"
-    } else {
-        $cq = 27  # Perfect for 720p (Prev: 26)
-        $desc = "OPTIMIZED SIZE (720p)"
+# ---------------------------------------------------------
+#  MODERN FOLDER PICKER
+# ---------------------------------------------------------
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+public class FolderPicker {
+    public string ResultPath;
+    public bool ShowDialog() {
+        var dialog = new System.Windows.Forms.FolderBrowserDialog();
+        dialog.Description = "Select Media Folder";
+        dialog.ShowNewFolderButton = false;
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK) {
+            ResultPath = dialog.SelectedPath;
+            return true;
+        }
+        return false;
     }
-    # ------------------------------------------
+}
+"@ -ReferencedAssemblies System.Windows.Forms
+
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    Write-Host "FFmpeg missing! Install it first." -ForegroundColor Red; Exit
+}
+
+# Function: Core Conversion
+function Start-Conversion {
+    param ([string]$TargetFolder, [string]$PresetName, [bool]$DeleteSource)
+
+    # --- QUALITY SETTINGS (ADJUSTED FOR SIZE) ---
+    if ($PresetName -eq "1080p") {
+        # Changed from 24 -> 27 (Fixes the 650MB bloat)
+        $cq = 27  
+        $desc = "BALANCED 1080p"
+    } else {
+        # Changed from 27 -> 29 (Ensures file is smaller than TS)
+        $cq = 29  
+        $desc = "COMPACT 720p"
+    }
+    # --------------------------------------------
 
     $files = Get-ChildItem -Path $TargetFolder -Filter *.ts -Recurse
     $totalFiles = $files.Count
 
     if ($totalFiles -eq 0) {
-        Write-Host "No .ts files found here!" -ForegroundColor Red
-        Start-Sleep -Seconds 2
-        return
+        Write-Host "No .ts files found!" -ForegroundColor Red; Start-Sleep 2; return
     }
 
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host " MISSION START: $PresetName" -ForegroundColor Yellow
+    Write-Host " STARTING BATCH: $desc" -ForegroundColor Yellow
     Write-Host " Folder: $TargetFolder" -ForegroundColor Gray
-    Write-Host " Files:  $totalFiles episodes" -ForegroundColor Gray
+    Write-Host " Files:  $totalFiles" -ForegroundColor Gray
     Write-Host "==========================================" -ForegroundColor Cyan
     
-    # Start the Stopwatch
     $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
     $count = 0
 
@@ -66,94 +71,97 @@ function Start-Conversion {
         $inputPath = $file.FullName
         $outputPath = [System.IO.Path]::ChangeExtension($inputPath, ".mp4")
 
-        # Progress Bar in Main Window
+        # Visual Separator
+        Write-Host "------------------------------------------" -ForegroundColor DarkGray
         Write-Host "[$count/$totalFiles] Processing: " -NoNewline -ForegroundColor Green
         Write-Host $file.Name -ForegroundColor White
 
         if (Test-Path $outputPath) {
-            Write-Host "    -> Skipped (Already exists)" -ForegroundColor DarkGray
+            Write-Host "    -> Skipped (Exists)" -ForegroundColor DarkGray
             continue
         }
 
-        # ---------------------------------------------------------
-        # THE POPUP WINDOW COMMAND
-        # We removed -NoNewWindow so it pops up visually
-        # ---------------------------------------------------------
+        # --- THE FIX: -NoNewWindow ---
+        # Runs inside this window. No popping up. No stealing focus.
         $process = Start-Process -FilePath "ffmpeg" -ArgumentList `
-            "-y -hide_banner",
+            "-y -hide_banner -loglevel error -stats",
             "-fflags +genpts+discardcorrupt",
             "-hwaccel cuda -hwaccel_output_format cuda",
             "-i `"$inputPath`"",
             "-c:v hevc_nvenc -preset p7 -cq $cq -rc-lookahead 32",
             "-c:a copy",
-            "`"$outputPath`"" -PassThru -Wait 
+            "`"$outputPath`"" -PassThru -Wait -NoNewWindow
         
-        # Check result
         if ($process.ExitCode -eq 0) {
+            # Calculate Size Difference
+            $inSize = (Get-Item $inputPath).Length / 1MB
+            $outSize = (Get-Item $outputPath).Length / 1MB
+            $diff = $outSize - $inSize
+            
+            # Show Result in color
+            if ($outSize -lt $inSize) {
+                Write-Host "    [OK] Done! Saved $([math]::Round($inSize - $outSize)) MB" -ForegroundColor Cyan
+            } else {
+                Write-Host "    [OK] Done! (+$([math]::Round($diff)) MB)" -ForegroundColor Yellow
+            }
+
             # Deletion Logic
             if ($DeleteSource) {
-                if ((Get-Item $outputPath).Length -gt 1000) {
+                if ($outSize -gt 1) {
                     Remove-Item $inputPath -Force
-                    Write-Host "    -> Success! Original deleted." -ForegroundColor Cyan
+                    Write-Host "    -> Original deleted." -ForegroundColor Red
                 }
-            } else {
-                Write-Host "    -> Success!" -ForegroundColor Cyan
             }
         } else {
-            Write-Host "    -> FAILED!" -ForegroundColor Red
+            Write-Host "    [ERROR] Conversion Failed!" -ForegroundColor Red
         }
     }
 
     $swTotal.Stop()
-    $avgTime = $swTotal.Elapsed.TotalSeconds / $totalFiles
-
-    # MISSION REPORT
-    Write-Host "`n==========================================" -ForegroundColor Yellow
-    Write-Host "           MISSION ACCOMPLISHED           " -ForegroundColor Green
-    Write-Host "==========================================" -ForegroundColor Yellow
-    Write-Host " Total Time:  $($swTotal.Elapsed.ToString('hh\:mm\:ss'))" -ForegroundColor White
-    Write-Host " Avg per Ep:  $([math]::Round($avgTime, 1)) seconds" -ForegroundColor White
-    Write-Host " Total Files: $totalFiles" -ForegroundColor White
-    Write-Host "==========================================" -ForegroundColor Yellow
+    $avg = $swTotal.Elapsed.TotalSeconds / $totalFiles
     
-    Write-Host "`nPress any key to return to Main Menu..."
+    Write-Host "`n==========================================" -ForegroundColor Yellow
+    Write-Host " BATCH COMPLETE " -ForegroundColor Green
+    Write-Host " Total Time: $($swTotal.Elapsed.ToString('hh\:mm\:ss'))" 
+    Write-Host " Avg Time:   $([math]::Round($avg, 0)) sec/file"
+    Write-Host "==========================================" -ForegroundColor Yellow
+    Write-Host "Press any key to return..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 }
 
-# ================= MAIN MENU LOOP =================
+# ================= MAIN MENU =================
 do {
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host "       CONVERTZE STUDIO (RTX 4080)        " -ForegroundColor White
+    Write-Host "    CONVERTZE STUDIO (Background Mode)    " -ForegroundColor White
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host " 1. Convert to 1080p (Max Quality)" -ForegroundColor Green
-    Write-Host " 2. Convert to 720p  (Optimized)" -ForegroundColor Green
-    Write-Host " 3. Convert (1080p) + DELETE .TS" -ForegroundColor Red
-    Write-Host " 4. Convert (720p)  + DELETE .TS" -ForegroundColor Red
-    Write-Host " Q. Exit (Clear)" -ForegroundColor Gray
+    Write-Host " 1. Convert 1080p (Balanced)" -ForegroundColor Green
+    Write-Host " 2. Convert 720p  (Compact)" -ForegroundColor Green
+    Write-Host " 3. Convert 1080p + DELETE .TS" -ForegroundColor Red
+    Write-Host " 4. Convert 720p  + DELETE .TS" -ForegroundColor Red
+    Write-Host " Q. Exit" -ForegroundColor Gray
     Write-Host "==========================================" -ForegroundColor Cyan
     
     $choice = Read-Host " Select Option"
 
     if ($choice -in '1','2','3','4') {
-        # Select Folder using the NEW Picker
-        Write-Host "Opening Folder Picker..." -ForegroundColor DarkGray
-        $path = Get-FolderSelection
-
-        if ($path) {
-            switch ($choice) {
-                '1' { Start-Conversion -TargetFolder $path -PresetName "1080p" -DeleteSource $false }
-                '2' { Start-Conversion -TargetFolder $path -PresetName "720p"  -DeleteSource $false }
-                '3' { Start-Conversion -TargetFolder $path -PresetName "1080p" -DeleteSource $true }
-                '4' { Start-Conversion -TargetFolder $path -PresetName "720p"  -DeleteSource $true }
-            }
+        # Try GUI first, user can cancel to switch to manual
+        $p = $null
+        $picker = New-Object FolderPicker
+        if ($picker.ShowDialog()) { 
+            $p = $picker.ResultPath 
         } else {
-            Write-Host "Selection Cancelled." -ForegroundColor Red
-            Start-Sleep -Seconds 1
+             Write-Host "`nGUI Cancelled. Paste Path manually:" -ForegroundColor Yellow
+             $p = Read-Host "Path"
+        }
+
+        if ($p -and (Test-Path $p)) {
+            switch ($choice) {
+                '1' { Start-Conversion $p "1080p" $false }
+                '2' { Start-Conversion $p "720p"  $false }
+                '3' { Start-Conversion $p "1080p" $true }
+                '4' { Start-Conversion $p "720p"  $true }
+            }
         }
     }
-
 } until ($choice -eq 'Q')
-
-# Clean Exit
-Clear-Host
