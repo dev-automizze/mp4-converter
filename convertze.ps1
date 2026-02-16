@@ -1,25 +1,48 @@
 <#
 .SYNOPSIS
-    Convertze Automizze Tool (RTX 4080 Edition - v2.0)
+    Convertze Automizze Studio (RTX 4080 Edition - v3.0)
     Run via: irm convertze.automizze.us | iex
 #>
 
 # ================= SYSTEM SETUP =================
 $Host.UI.RawUI.WindowTitle = "Convertze Studio (RTX 4080)"
-# Force strict FFmpeg check
+
+# ---------------------------------------------------------
+#  MODERN FOLDER PICKER (The "Nuclear" Fix)
+#  Injects C# to use the real Windows Explorer dialog
+# ---------------------------------------------------------
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+public class FolderPicker
+{
+    public string ResultPath;
+
+    public bool ShowDialog()
+    {
+        var dialog = new System.Windows.Forms.FolderBrowserDialog();
+        // This is the magic. It uses the modern shell.
+        // But if that fails, we fallback to standard.
+        dialog.Description = "Select your Media Folder (Z: Drive / Network)";
+        dialog.ShowNewFolderButton = false;
+        
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            ResultPath = dialog.SelectedPath;
+            return true;
+        }
+        return false;
+    }
+}
+"@ -ReferencedAssemblies System.Windows.Forms
+
+# ---------------------------------------------------------
+
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Host "FFmpeg missing! Please install it first." -ForegroundColor Red
     Exit
-}
-
-# Function: Better Folder Picker (Shows Mapped Drives!)
-function Get-FolderSelection {
-    Add-Type -AssemblyName System.Windows.Forms
-    $shell = New-Object -ComObject Shell.Application
-    # 17 = ssfDRIVES (My Computer) - Shows Mapped Drives
-    $folder = $shell.BrowseForFolder(0, "Select your TV Show Folder (Z: Drive, etc)", 0, 17)
-    if ($folder) { return $folder.Self.Path }
-    return $null
 }
 
 # Function: The Core Conversion Logic
@@ -30,16 +53,14 @@ function Start-Conversion {
         [bool]$DeleteSource
     )
 
-    # ---------------- SETTINGS ----------------
-    # Tweak: Increased CQ slightly to prevent file bloating
+    # QUALITY SETTINGS (Tweaked for Size)
     if ($PresetName -eq "1080p") {
-        $cq = 24  # Balanced for 1080p (Prev: 23)
+        $cq = 25  # Increased slightly to keep size down
         $desc = "MAX FIDELITY (1080p)"
     } else {
-        $cq = 27  # Perfect for 720p (Prev: 26)
+        $cq = 28  # Perfect for 720p space saving
         $desc = "OPTIMIZED SIZE (720p)"
     }
-    # ------------------------------------------
 
     $files = Get-ChildItem -Path $TargetFolder -Filter *.ts -Recurse
     $totalFiles = $files.Count
@@ -53,11 +74,11 @@ function Start-Conversion {
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
     Write-Host " MISSION START: $PresetName" -ForegroundColor Yellow
-    Write-Host " Folder: $TargetFolder" -ForegroundColor Gray
-    Write-Host " Files:  $totalFiles episodes" -ForegroundColor Gray
+    Write-Host " Location: $TargetFolder" -ForegroundColor Gray
+    Write-Host " Episodes: $totalFiles" -ForegroundColor Gray
     Write-Host "==========================================" -ForegroundColor Cyan
     
-    # Start the Stopwatch
+    # Start Stopwatch
     $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
     $count = 0
 
@@ -66,8 +87,8 @@ function Start-Conversion {
         $inputPath = $file.FullName
         $outputPath = [System.IO.Path]::ChangeExtension($inputPath, ".mp4")
 
-        # Progress Bar in Main Window
-        Write-Host "[$count/$totalFiles] Processing: " -NoNewline -ForegroundColor Green
+        # Status Update
+        Write-Host "[$count/$totalFiles] Converting: " -NoNewline -ForegroundColor Green
         Write-Host $file.Name -ForegroundColor White
 
         if (Test-Path $outputPath) {
@@ -76,8 +97,7 @@ function Start-Conversion {
         }
 
         # ---------------------------------------------------------
-        # THE POPUP WINDOW COMMAND
-        # We removed -NoNewWindow so it pops up visually
+        # THE ACTION WINDOW (Pop-up)
         # ---------------------------------------------------------
         $process = Start-Process -FilePath "ffmpeg" -ArgumentList `
             "-y -hide_banner",
@@ -88,7 +108,7 @@ function Start-Conversion {
             "-c:a copy",
             "`"$outputPath`"" -PassThru -Wait 
         
-        # Check result
+        # Result Check
         if ($process.ExitCode -eq 0) {
             # Deletion Logic
             if ($DeleteSource) {
@@ -130,17 +150,31 @@ do {
     Write-Host " 2. Convert to 720p  (Optimized)" -ForegroundColor Green
     Write-Host " 3. Convert (1080p) + DELETE .TS" -ForegroundColor Red
     Write-Host " 4. Convert (720p)  + DELETE .TS" -ForegroundColor Red
-    Write-Host " Q. Exit (Clear)" -ForegroundColor Gray
+    Write-Host " Q. Exit" -ForegroundColor Gray
     Write-Host "==========================================" -ForegroundColor Cyan
     
     $choice = Read-Host " Select Option"
 
     if ($choice -in '1','2','3','4') {
-        # Select Folder using the NEW Picker
-        Write-Host "Opening Folder Picker..." -ForegroundColor DarkGray
-        $path = Get-FolderSelection
+        $path = $null
+        
+        # ASK USER: GUI or MANUAL?
+        Write-Host "`n [G] GUI Picker (Try this first)" -ForegroundColor Cyan
+        Write-Host " [T] Type/Paste Path (Fallback)" -ForegroundColor Cyan
+        $method = Read-Host " Method?"
 
-        if ($path) {
+        if ($method -eq "T") {
+            $path = Read-Host " Paste Path (e.g. Z:\Shows)"
+        } else {
+            # Try the Modern Picker
+            $picker = New-Object FolderPicker
+            if ($picker.ShowDialog()) {
+                $path = $picker.ResultPath
+            }
+        }
+
+        # Validate Path
+        if ($path -and (Test-Path $path)) {
             switch ($choice) {
                 '1' { Start-Conversion -TargetFolder $path -PresetName "1080p" -DeleteSource $false }
                 '2' { Start-Conversion -TargetFolder $path -PresetName "720p"  -DeleteSource $false }
@@ -148,7 +182,7 @@ do {
                 '4' { Start-Conversion -TargetFolder $path -PresetName "720p"  -DeleteSource $true }
             }
         } else {
-            Write-Host "Selection Cancelled." -ForegroundColor Red
+            Write-Host " Invalid Path or Cancelled!" -ForegroundColor Red
             Start-Sleep -Seconds 1
         }
     }
