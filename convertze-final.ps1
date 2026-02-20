@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Convertze Automizze Studio (RTX 4080 - v7.1 Auto-Detect Fix)
+    Convertze Automizze Studio (RTX 4080 - v8.0 Bulletproof Edition)
     Run via: irm convertze.automizze.us | iex
 #>
 
 # ================= SYSTEM SETUP =================
-$Host.UI.RawUI.WindowTitle = "Convertze Studio (v7.1 Nvidia Suuported)"
+$Host.UI.RawUI.WindowTitle = "Convertze Studio (Bulletproof Manual Engine)"
 
 # ---------------------------------------------------------
 #  MODERN FOLDER PICKER
@@ -35,7 +35,7 @@ public class FolderPicker {
 function Install-FFmpeg {
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host "            FFMPEG INSTALLER              " -ForegroundColor Yellow
+    Write-Host "    FFMPEG AUTO-INSTALLER (No Admin)      " -ForegroundColor Yellow
     Write-Host "==========================================" -ForegroundColor Cyan
 
     $installDir = "$env:LOCALAPPDATA\Convertze_FFmpeg"
@@ -48,8 +48,6 @@ function Install-FFmpeg {
     $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
     Write-Host "`n[1/4] Downloading Latest FFmpeg..." -ForegroundColor White
-    Write-Host "      (Please wait, this is a ~100MB file...)" -ForegroundColor Gray
-    
     $ProgressPreference = 'SilentlyContinue' 
     Invoke-WebRequest -Uri $url -OutFile $zipPath
     $ProgressPreference = 'Continue'
@@ -83,12 +81,19 @@ function Install-FFmpeg {
 #  CORE CONVERSION
 # ---------------------------------------------------------
 function Start-Conversion {
-    param ([string]$TargetFolder, [bool]$DeleteSource)
+    param ([string]$TargetFolder, [string]$PresetName, [bool]$DeleteSource)
 
-    if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -or -not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
+    if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
         Write-Host "`n[ERROR] FFmpeg is missing!" -ForegroundColor Red
-        Write-Host "Please use Option 3 to install it first." -ForegroundColor Yellow
+        Write-Host "Please use Option 5 to install it first." -ForegroundColor Yellow
         Start-Sleep 3; return
+    }
+
+    # --- QUALITY SETTINGS ---
+    if ($PresetName -eq "1080p") {
+        $cq = 27; $desc = "BALANCED 1080p"
+    } else {
+        $cq = 29; $desc = "COMPACT 720p"
     }
 
     $files = Get-ChildItem -Path $TargetFolder -Filter *.ts -Recurse | 
@@ -102,7 +107,7 @@ function Start-Conversion {
 
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host " BATCH START: SMART AUTO-DETECT" -ForegroundColor Yellow
+    Write-Host " STARTING BATCH: $desc" -ForegroundColor Yellow
     Write-Host " Folder: $TargetFolder" -ForegroundColor Gray
     Write-Host " Files:  $totalFiles" -ForegroundColor Gray
     Write-Host "==========================================" -ForegroundColor Cyan
@@ -115,33 +120,16 @@ function Start-Conversion {
         $inputPath = $file.FullName
         $outputPath = [System.IO.Path]::ChangeExtension($inputPath, ".mp4")
 
-        # --- THE FIX: Robust ffprobe parsing ---
-        try {
-            # Use & to call ffprobe safely, and ask for clean CSV output
-            $probeOutput = & ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 $inputPath
-            
-            # Grab the first line, trim hidden spaces, and convert to integer
-            $cleanHeight = ($probeOutput | Select-Object -First 1).Trim()
-            $height = [int]$cleanHeight
-        } catch {
-            $height = 1080 # Fallback only if the file is completely broken
-        }
-        # ---------------------------------------
-
-        if ($height -ge 1080) { $cq = 27; $resTag = "1080p" } 
-        elseif ($height -ge 720) { $cq = 29; $resTag = "720p" } 
-        else { $cq = 31; $resTag = "$($height)p" }
-
         Write-Host "------------------------------------------" -ForegroundColor DarkGray
         Write-Host "[$count/$totalFiles] Processing: " -NoNewline -ForegroundColor Green
-        Write-Host "$($file.Name) " -NoNewline -ForegroundColor White
-        Write-Host "[$resTag]" -ForegroundColor Magenta
+        Write-Host "$($file.Name)" -ForegroundColor White
 
         if (Test-Path $outputPath) {
             Write-Host "    -> Skipped (Exists)" -ForegroundColor DarkGray
             continue
         }
 
+        # The fast p5 setting is kept here!
         $process = Start-Process -FilePath "ffmpeg" -ArgumentList `
             "-y -hide_banner -loglevel error -stats",
             "-fflags +genpts+discardcorrupt",
@@ -186,21 +174,25 @@ function Start-Conversion {
 do {
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host "    CONVERTZE STUDIO (Shareable Edition)  " -ForegroundColor White
+    Write-Host "    CONVERTZE STUDIO (Bulletproof Edition)" -ForegroundColor White
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host " 1. Start Auto-Convert (Keep .TS)" -ForegroundColor Green
-    Write-Host " 2. Start Auto-Convert (DELETE .TS)" -ForegroundColor Red
+    Write-Host " [KEEP ORIGINAL .TS FILES]" -ForegroundColor Gray
+    Write-Host " 1. Convert 1080p (Balanced)" -ForegroundColor Green
+    Write-Host " 2. Convert 720p  (Compact)" -ForegroundColor Green
+    Write-Host " `n [DELETE ORIGINAL .TS FILES]" -ForegroundColor Gray
+    Write-Host " 3. Convert 1080p + DELETE" -ForegroundColor Red
+    Write-Host " 4. Convert 720p  + DELETE" -ForegroundColor Red
     Write-Host " -----------------------------------------" -ForegroundColor DarkGray
-    Write-Host " 3. Install/Update FFmpeg Package" -ForegroundColor Magenta
+    Write-Host " 5. Install/Update FFmpeg Package" -ForegroundColor Magenta
     Write-Host " Q. Exit" -ForegroundColor Gray
     Write-Host "==========================================" -ForegroundColor Cyan
     
     $choice = Read-Host " Select Option"
 
-    if ($choice -eq '3') {
+    if ($choice -eq '5') {
         Install-FFmpeg
     }
-    elseif ($choice -in '1','2') {
+    elseif ($choice -in '1','2','3','4') {
         $p = $null
         $picker = New-Object FolderPicker
         if ($picker.ShowDialog()) { 
@@ -212,8 +204,10 @@ do {
 
         if ($p -and (Test-Path $p)) {
             switch ($choice) {
-                '1' { Start-Conversion $p $false }
-                '2' { Start-Conversion $p $true }
+                '1' { Start-Conversion $p "1080p" $false }
+                '2' { Start-Conversion $p "720p"  $false }
+                '3' { Start-Conversion $p "1080p" $true }
+                '4' { Start-Conversion $p "720p"  $true }
             }
         }
     }
