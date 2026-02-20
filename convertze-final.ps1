@@ -5,7 +5,7 @@
 #>
 
 # ================= SYSTEM SETUP =================
-$Host.UI.RawUI.WindowTitle = "Convertze Studio (v7.1 Auto-Detect Fix)"
+$Host.UI.RawUI.WindowTitle = "Convertze Studio (v7.1 Nvidia Suuported)"
 
 # ---------------------------------------------------------
 #  MODERN FOLDER PICKER
@@ -35,7 +35,7 @@ public class FolderPicker {
 function Install-FFmpeg {
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host "    FFMPEG AUTO-INSTALLER (No Admin)      " -ForegroundColor Yellow
+    Write-Host "            FFMPEG INSTALLER              " -ForegroundColor Yellow
     Write-Host "==========================================" -ForegroundColor Cyan
 
     $installDir = "$env:LOCALAPPDATA\Convertze_FFmpeg"
