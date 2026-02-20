@@ -17,3 +17,11 @@ A lightweight, bulletproof PowerShell automation tool designed to batch-convert 
 2. Run the script via your custom shortcut:
    ```powershell
    irm convertze.automizze.us | iex
+
+3. If this is your first time running the script on a new PC, select Option 5 from the menu to automatically install FFmpeg.
+4. Select your conversion preset (Keep or Delete original files), pick your TV show folder, and let your GPU do the rest.
+
+⚙️ The Presets Explained
+1080p (Balanced): Uses CQ 27. The safest "Set and Forget" option. It perfectly preserves 1080p media and safely handles 720p media without degrading the image.
+
+720p (Compact): Uses CQ 29. Maximizes storage space savings. Best used specifically on folders you know contain only 720p (or lower) video files.
