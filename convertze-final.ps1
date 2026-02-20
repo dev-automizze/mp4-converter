@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Convertze Automizze Studio (RTX 4080 - v6.0 Auto-Detect)
+    Convertze Automizze Studio (RTX 4080 - v7.1 Auto-Detect Fix)
     Run via: irm convertze.automizze.us | iex
 #>
 
 # ================= SYSTEM SETUP =================
-$Host.UI.RawUI.WindowTitle = "Convertze Studio (Auto-Detect Engine)"
+$Host.UI.RawUI.WindowTitle = "Convertze Studio (v7.1 Auto-Detect Fix)"
 
 # ---------------------------------------------------------
 #  MODERN FOLDER PICKER
@@ -29,16 +29,68 @@ public class FolderPicker {
 }
 "@ -ReferencedAssemblies System.Windows.Forms
 
-# Verify Tools
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -or -not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
-    Write-Host "FFmpeg or FFprobe missing! Please ensure both are installed." -ForegroundColor Red; Exit
+# ---------------------------------------------------------
+#  THE AUTO-INSTALLER (NO ADMIN REQUIRED)
+# ---------------------------------------------------------
+function Install-FFmpeg {
+    Clear-Host
+    Write-Host "==========================================" -ForegroundColor Cyan
+    Write-Host "    FFMPEG AUTO-INSTALLER (No Admin)      " -ForegroundColor Yellow
+    Write-Host "==========================================" -ForegroundColor Cyan
+
+    $installDir = "$env:LOCALAPPDATA\Convertze_FFmpeg"
+    
+    if (-not (Test-Path $installDir)) { 
+        New-Item -ItemType Directory -Path $installDir | Out-Null 
+    }
+
+    $zipPath = "$installDir\ffmpeg.zip"
+    $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+
+    Write-Host "`n[1/4] Downloading Latest FFmpeg..." -ForegroundColor White
+    Write-Host "      (Please wait, this is a ~100MB file...)" -ForegroundColor Gray
+    
+    $ProgressPreference = 'SilentlyContinue' 
+    Invoke-WebRequest -Uri $url -OutFile $zipPath
+    $ProgressPreference = 'Continue'
+
+    Write-Host "[2/4] Extracting files..." -ForegroundColor White
+    Expand-Archive -Path $zipPath -DestinationPath "$installDir\extracted" -Force
+
+    Write-Host "[3/4] Organizing executables..." -ForegroundColor White
+    $exeFiles = Get-ChildItem -Path "$installDir\extracted" -Filter "*.exe" -Recurse
+    foreach ($exe in $exeFiles) {
+        Move-Item -Path $exe.FullName -Destination $installDir -Force
+    }
+
+    Write-Host "[4/4] Wiring it into Windows..." -ForegroundColor White
+    Remove-Item -Path $zipPath -Force
+    Remove-Item -Path "$installDir\extracted" -Recurse -Force
+
+    $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($currentPath -notmatch [regex]::Escape($installDir)) {
+        $newPath = $currentPath + ";" + $installDir
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        $env:Path = $env:Path + ";" + $installDir 
+    }
+
+    Write-Host "`nSUCCESS! FFmpeg is installed and ready to use." -ForegroundColor Green
+    Write-Host "Press any key to return to menu..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 }
 
-# Function: Core Conversion
+# ---------------------------------------------------------
+#  CORE CONVERSION
+# ---------------------------------------------------------
 function Start-Conversion {
     param ([string]$TargetFolder, [bool]$DeleteSource)
 
-    # NATURAL SORT (S01E01, S01E02, etc.)
+    if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -or -not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
+        Write-Host "`n[ERROR] FFmpeg is missing!" -ForegroundColor Red
+        Write-Host "Please use Option 3 to install it first." -ForegroundColor Yellow
+        Start-Sleep 3; return
+    }
+
     $files = Get-ChildItem -Path $TargetFolder -Filter *.ts -Recurse | 
         Sort-Object { [regex]::Replace($_.Name, '\d+', { $args[0].Value.PadLeft(10, '0') }) }
 
@@ -63,23 +115,22 @@ function Start-Conversion {
         $inputPath = $file.FullName
         $outputPath = [System.IO.Path]::ChangeExtension($inputPath, ".mp4")
 
-        # --- AUTO-DETECT RESOLUTION ---
+        # --- THE FIX: Robust ffprobe parsing ---
         try {
-            $heightStr = (ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "`"$inputPath`"")
-            $height = [int]$heightStr
+            # Use & to call ffprobe safely, and ask for clean CSV output
+            $probeOutput = & ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 $inputPath
+            
+            # Grab the first line, trim hidden spaces, and convert to integer
+            $cleanHeight = ($probeOutput | Select-Object -First 1).Trim()
+            $height = [int]$cleanHeight
         } catch {
-            $height = 1080 # Fallback if probe fails
+            $height = 1080 # Fallback only if the file is completely broken
         }
+        # ---------------------------------------
 
-        # Apply correct preset based on resolution
-        if ($height -ge 1080) { 
-            $cq = 27; $resTag = "1080p" 
-        } elseif ($height -ge 720) { 
-            $cq = 29; $resTag = "720p" 
-        } else { 
-            $cq = 31; $resTag = "$($height)p" # Covers 480p and lower
-        }
-        # ------------------------------
+        if ($height -ge 1080) { $cq = 27; $resTag = "1080p" } 
+        elseif ($height -ge 720) { $cq = 29; $resTag = "720p" } 
+        else { $cq = 31; $resTag = "$($height)p" }
 
         Write-Host "------------------------------------------" -ForegroundColor DarkGray
         Write-Host "[$count/$totalFiles] Processing: " -NoNewline -ForegroundColor Green
@@ -91,8 +142,6 @@ function Start-Conversion {
             continue
         }
 
-        # --- CONVERSION COMMAND ---
-        # Note: Changed preset from p7 to p5 for a massive speed increase!
         $process = Start-Process -FilePath "ffmpeg" -ArgumentList `
             "-y -hide_banner -loglevel error -stats",
             "-fflags +genpts+discardcorrupt",
@@ -137,16 +186,21 @@ function Start-Conversion {
 do {
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host "    CONVERTZE STUDIO (Auto-Detect Engine) " -ForegroundColor White
+    Write-Host "    CONVERTZE STUDIO (Shareable Edition)  " -ForegroundColor White
     Write-Host "==========================================" -ForegroundColor Cyan
     Write-Host " 1. Start Auto-Convert (Keep .TS)" -ForegroundColor Green
     Write-Host " 2. Start Auto-Convert (DELETE .TS)" -ForegroundColor Red
-    Write-Host " Q. Exit (Close Window)" -ForegroundColor Gray
+    Write-Host " -----------------------------------------" -ForegroundColor DarkGray
+    Write-Host " 3. Install/Update FFmpeg Package" -ForegroundColor Magenta
+    Write-Host " Q. Exit" -ForegroundColor Gray
     Write-Host "==========================================" -ForegroundColor Cyan
     
     $choice = Read-Host " Select Option"
 
-    if ($choice -in '1','2') {
+    if ($choice -eq '3') {
+        Install-FFmpeg
+    }
+    elseif ($choice -in '1','2') {
         $p = $null
         $picker = New-Object FolderPicker
         if ($picker.ShowDialog()) { 
@@ -165,5 +219,4 @@ do {
     }
 } until ($choice -eq 'Q' -or $choice -eq 'q')
 
-# Kills the PowerShell window completely
 Exit
